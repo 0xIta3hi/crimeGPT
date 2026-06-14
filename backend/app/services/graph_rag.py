@@ -1,251 +1,198 @@
+"""
+graph_rag.py
+Graph RAG Service coordinating entity extraction, Neo4j context retrieval,
+and local LLM structured JSON response generation.
+"""
+
+import json
 import logging
+import requests
 from typing import Any, Optional
-import spacy
-from backend.app.config import settings
+
 from backend.app.database.neo4j_client import neo4j_client
+
+# Handle robust imports for ner_extractor
+try:
+    from backend.app.services.ner_extractor import extract_entities
+except ImportError:
+    try:
+        from app.services.ner_extractor import extract_entities
+    except ImportError:
+        from .ner_extractor import extract_entities
 
 logger = logging.getLogger("crimegpt.services.graph_rag")
 
-# Load spaCy model with graceful fallback if the model is not found
-nlp = None
-try:
-    nlp = spacy.load(settings.SPACY_MODEL)
-    logger.info(f"Loaded spaCy model '{settings.SPACY_MODEL}' successfully.")
-except Exception as e:
-    logger.warning(
-        f"Could not load spaCy model '{settings.SPACY_MODEL}' due to: {e}. "
-        f"Graph RAG will use fallback rule-based entity extraction. "
-        f"To resolve, run: python -m spacy download {settings.SPACY_MODEL}"
-    )
+# Hardcoded keyword to category mapping dict
+KEYWORD_TO_CATEGORY = {
+    "murder": "murder",
+    "killed": "murder",
+    "assault": "assault",
+    "theft": "theft",
+    "stolen": "theft",
+    "robbery": "robbery",
+    "kidnap": "kidnapping",
+    "rape": "sexual offenses",
+    "extortion": "extortion",
+    "hack": "cybercrime",
+    "fraud": "forgery",
+    "forge": "forgery",
+    "riot": "unlawful assembly"
+}
 
 class GraphRAGService:
     """
-    Service layer coordinating the Graph Retrieval-Augmented Generation (RAG) pipeline:
-    1. Entity Extraction (NER) from narrative.
-    2. Knowledge Graph context retrieval (Cypher queries).
-    3. LLM System Prompt packaging.
+    Service coordinating the NLP extraction and Graph-based RAG pipeline.
     """
 
     async def process_and_query_rag(self, narrative: str) -> dict[str, Any]:
         """
-        Main pipeline method to process crime narratives, retrieve relevant legal/FIR
-        nodes from Neo4j, and compile the context for local LLM generation.
+        Executes the complete Graph RAG pipeline:
+        1. Extract entities and offense keywords.
+        2. Retrieve legal context from Neo4j based on offense categories.
+        3. Formulate prompt context.
+        4. Request structured output from local Ollama LLM.
+        5. Parse response and format result.
         """
-        logger.info(f"Processing narrative: '{narrative[:60]}...'")
+        logger.info(f"Initiating Graph RAG query for narrative: '{narrative[:60]}...'")
 
-        # Step A: Entity Extraction
-        entities = self._extract_entities(narrative)
-        logger.debug(f"Extracted entities: {entities}")
+        # Step A: Entity extraction and mapping to offense categories
+        entities = extract_entities(narrative)
+        offense_keywords = entities.get("offense_keywords", [])
+        
+        # Determine offense categories to query
+        categories = list(set(KEYWORD_TO_CATEGORY[kw] for kw in offense_keywords if kw in KEYWORD_TO_CATEGORY))
+        logger.info(f"Extracted keywords: {offense_keywords} mapped to categories: {categories}")
 
-        # Step B: Cypher query to retrieve BNS/BNSS nodes
-        retrieved_nodes = await self._retrieve_knowledge_graph_nodes(entities)
-        logger.debug(f"Retrieved nodes from Neo4j: {retrieved_nodes}")
-
-        # Step C: Packaging into a system prompt context window block
-        context_prompt = self._compile_system_prompt_context(narrative, entities, retrieved_nodes)
-
-        return {
-            "narrative": narrative,
-            "extracted_entities": entities,
-            "retrieved_nodes": retrieved_nodes,
-            "system_prompt_context": context_prompt
-        }
-
-    def _extract_entities(self, narrative: str) -> dict[str, list[str]]:
-        """
-        Extracts entities (Accused, Location, Offense) from the narrative.
-        Uses spaCy when available, with a regex/keyword fallback.
-        """
-        accused = []
-        locations = []
-        offenses = []
-
-        if nlp:
-            doc = nlp(narrative)
-            for ent in doc.ents:
-                if ent.label_ == "PERSON":
-                    accused.append(ent.text)
-                elif ent.label_ in ("GPE", "LOC", "FAC"):
-                    locations.append(ent.text)
-            
-            # Simple keyword extraction for offenses (e.g. theft, assault, murder)
-            lower_text = narrative.lower()
-            known_offenses = ["theft", "burglary", "assault", "murder", "robbery", "fraud", "kidnapping", "cheating", "riot"]
-            for off in known_offenses:
-                if off in lower_text:
-                    offenses.append(off.capitalize())
-        else:
-            # Fallback simple rule-based extractor
-            # In a real environment, this extracts mock entities when spaCy is unavailable
-            words = narrative.split()
-            # Simple capitalized words check for Person/Location names as fallback
-            for word in words:
-                clean_word = word.strip(",.?!:;()\"'")
-                if clean_word and clean_word[0].isupper() and clean_word.lower() not in ["the", "a", "an", "on", "in", "at", "by", "for", "with"]:
-                    # Basic heuristic mapping to Accused or Location
-                    if "street" in clean_word.lower() or "road" in clean_word.lower() or clean_word in ["Delhi", "Mumbai", "Bengaluru", "Kolkata"]:
-                        locations.append(clean_word)
-                    else:
-                        accused.append(clean_word)
-            
-            lower_text = narrative.lower()
-            known_offenses = ["theft", "burglary", "assault", "murder", "robbery", "fraud", "kidnapping", "cheating", "riot"]
-            for off in known_offenses:
-                if off in lower_text:
-                    offenses.append(off.capitalize())
-
-        # Deduplicate results
-        return {
-            "Accused": list(set(accused)),
-            "Location": list(set(locations)),
-            "Offense": list(set(offenses))
-        }
-
-    async def _retrieve_knowledge_graph_nodes(self, entities: dict[str, list[str]]) -> list[dict[str, Any]]:
-        """
-        Executes Cypher queries on Neo4j to retrieve relevant BNS (Bharatiya Nyaya Sanhita)
-        and BNSS (Bharatiya Nagarik Suraksha Sanhita) sections matching extracted entities.
-        """
         retrieved_nodes = []
-        offenses = entities.get("Offense", [])
-        locations = entities.get("Location", [])
+        context_block = "LEGAL CONTEXT:\nNo matching legal provisions retrieved."
 
-        # If no offenses or locations were extracted, we can do a default fallback search
-        search_terms = offenses + locations
-        if not search_terms:
-            logger.info("No query terms found. Returning empty node list.")
-            return retrieved_nodes
+        # Step B: Query Neo4j for relevant legal context
+        if categories:
+            cypher_query = """
+            MATCH (s:BNS_Section)
+            WHERE s.offense_category IN $categories
+            OPTIONAL MATCH (j:Judgment)-[:INTERPRETS]->(s)
+            OPTIONAL MATCH (s)-[:CROSS_REFERENCES]->(related:BNS_Section)
+            RETURN s.section_id AS section_id, 
+                   s.title AS title, 
+                   s.text AS text, 
+                   s.punishment AS punishment,
+                   collect(distinct j.citation) as judgments,
+                   collect(distinct related.section_id) as related_sections
+            """
+            try:
+                records = neo4j_client.execute_read(cypher_query, {"categories": categories})
+                
+                # Step C: Format retrieved provisions into the legal context block
+                context_parts = ["LEGAL CONTEXT:"]
+                for record in records:
+                    sec_id = record.get("section_id")
+                    title = record.get("title")
+                    text = record.get("text")
+                    punishment = record.get("punishment")
+                    judgments = record.get("judgments", [])
+                    related = record.get("related_sections", [])
 
-        # Cypher query schema placeholder:
-        # We search for BNS nodes (Sections) whose descriptions/names match our search terms,
-        # along with connected BNSS nodes (Procedures).
-        cypher_query = """
-        UNWIND $terms AS term
-        MATCH (bns:BNS_Section)
-        WHERE toLower(bns.description) CONTAINS toLower(term) 
-           OR toLower(bns.title) CONTAINS toLower(term)
-        OPTIONAL MATCH (bns)-[r:PROCEDURE_GOVERNED_BY]->(bnss:BNSS_Section)
-        RETURN bns.section_number AS section, 
-               bns.title AS title, 
-               bns.description AS description, 
-               bns.punishment AS punishment,
-               collect(bnss.section_number) AS associated_procedures
-        LIMIT 10
-        """
+                    # Store retrieved node info for response metadata
+                    retrieved_nodes.append({
+                        "section_id": sec_id,
+                        "title": title,
+                        "text": text,
+                        "punishment": punishment,
+                        "associated_judgments": judgments,
+                        "related_sections": related
+                    })
 
-        try:
-            # Execute the query using the thread-safe Neo4j Client helper.
-            # This query is a parameterized read transaction.
-            records = neo4j_client.execute_read(cypher_query, {"terms": search_terms})
-            for record in records:
-                retrieved_nodes.append({
-                    "section": record.get("section"),
-                    "title": record.get("title"),
-                    "description": record.get("description"),
-                    "punishment": record.get("punishment"),
-                    "associated_procedures": record.get("associated_procedures", [])
-                })
-        except Exception as e:
-            logger.error(f"Error querying Neo4j database: {e}")
-            # Mock / stub fallback response for national security hackathon offline workspace testing
-            logger.info("Returning mock/stub legal sections for offline hackathon testing.")
-            retrieved_nodes = self._get_mock_legal_sections(offenses)
+                    part = (
+                        f"Section {sec_id} - {title}: {text}\n"
+                        f"Punishment: {punishment}\n"
+                        f"Relevant Judgments: {judgments}\n"
+                        f"Related Sections: {related}"
+                    )
+                    context_parts.append(part)
+                
+                if len(context_parts) > 1:
+                    context_block = "\n\n".join(context_parts)
+                    
+            except Exception as e:
+                logger.error(f"Error querying Neo4j for categories: {categories}. Exception: {e}")
+                context_block = "LEGAL CONTEXT:\nError retrieving matching legal provisions from database."
 
-        return retrieved_nodes
-
-    def _compile_system_prompt_context(
-        self, narrative: str, entities: dict[str, list[str]], retrieved_nodes: list[dict[str, Any]]
-    ) -> str:
-        """
-        Compiles narrative context, extracted entities, and retrieved legal provisions into
-        a structured prompt segment for LLM instruction formatting.
-        """
-        entity_block = "\n".join(
-            [f"- {category}: {', '.join(items) if items else 'None'}" for category, items in entities.items()]
-        )
-
-        legal_block_list = []
-        for idx, node in enumerate(retrieved_nodes, 1):
-            sec_num = node.get("section", "N/A")
-            title = node.get("title", "Unknown Section")
-            desc = node.get("description", "No description available.")
-            punishment = node.get("punishment", "No punishment information.")
-            proc = node.get("associated_procedures", [])
-            proc_str = ", ".join(proc) if proc else "None"
-            
-            legal_block_list.append(
-                f"{idx}. Section {sec_num}: {title}\n"
-                f"   - Description: {desc}\n"
-                f"   - Punishment: {punishment}\n"
-                f"   - Associated BNSS Procedural Sections: {proc_str}"
-            )
-        legal_block = "\n".join(legal_block_list) if legal_block_list else "No matching BNS/BNSS legal provisions found."
-
+        # Step D: Request structured JSON analysis from Ollama local LLM
         system_prompt = (
-            "You are a professional legal assistant tool powered by CrimeGPT. "
-            "You are reviewing the following offense narrative to prepare a Draft Charge Sheet.\n\n"
-            "=== INPUT CRIME NARRATIVE ===\n"
-            f"{narrative}\n\n"
-            "=== EXTRACTED KEY ENTITIES ===\n"
-            f"{entity_block}\n\n"
-            "=== RETRIEVED LEGAL KNOWLEDGE (Neo4j BNS/BNSS Graph) ===\n"
-            f"{legal_block}\n\n"
-            "=== INSTRUCTION ===\n"
-            "Analyze the crime narrative and the retrieved BNS/BNSS sections. "
-            "Formulate a structured analysis detailing:\n"
-            "1. Prime offenses committed.\n"
-            "2. Applicable Bharatiya Nyaya Sanhita (BNS) section numbers.\n"
-            "3. Required Bharatiya Nagarik Suraksha Sanhita (BNSS) investigative procedures to proceed."
+            "You are a legal intelligence assistant for Indian law enforcement.\n"
+            "Given an FIR narrative and retrieved legal context, return ONLY a valid JSON object with these keys:\n"
+            '- "recommended_sections": list of section_id strings\n'
+            '- "reasoning": one sentence explaining why\n'
+            '- "required_documents": list of document names needed\n'
+            '- "landmark_judgments": list of citation strings\n'
+            "Do not include any text outside the JSON object."
         )
-
-        return system_prompt
-
-    def _get_mock_legal_sections(self, offenses: list[str]) -> list[dict[str, Any]]:
-        """
-        Helper returning mock legal sections if Neo4j is offline or empty during initialization.
-        """
-        mock_db = {
-            "Theft": {
-                "section": "303",
-                "title": "Theft",
-                "description": "Dishonestly taking moveable property out of the possession of any person without that person's consent.",
-                "punishment": "Imprisonment of either description for a term which may extend to three years, or with fine, or with both.",
-                "associated_procedures": ["BNSS-173 (Report of Police Officer)", "BNSS-182 (Search by Police Officer)"]
-            },
-            "Murder": {
-                "section": "103",
-                "title": "Murder",
-                "description": "Whoever commits murder shall be punished with death or imprisonment for life, and shall also be liable to fine.",
-                "punishment": "Death penalty or life imprisonment, and liability of fine.",
-                "associated_procedures": ["BNSS-174 (Inquest/Unnatural Death Report)", "BNSS-193 (Cognizance of Offence)"]
-            },
-            "Assault": {
-                "section": "115",
-                "title": "Voluntarily Causing Hurt",
-                "description": "Whoever does any act with the intention of thereby causing hurt to any person, or with the knowledge that he is likely thereby to cause hurt.",
-                "punishment": "Imprisonment for a term which may extend to one year, or with fine which may extend to ten thousand rupees, or with both.",
-                "associated_procedures": ["BNSS-176 (Medical Examination of Victim)"]
-            }
+        
+        user_prompt = f"FIR Narrative:\n{narrative}\n\n{context_block}"
+        
+        payload = {
+            "model": "phi3:mini",
+            "prompt": user_prompt,
+            "system": system_prompt,
+            "stream": False,
+            "format": "json"
         }
 
-        fallback_results = []
-        found_any = False
-        for off in offenses:
-            if off in mock_db:
-                fallback_results.append(mock_db[off])
-                found_any = True
+        # Initialize base response mapping
+        response_data = {
+            "narrative": narrative,
+            "extracted_entities": {
+                "Accused": entities.get("persons", []),
+                "Location": entities.get("locations", []),
+                "Offense": offense_keywords
+            },
+            "retrieved_nodes": retrieved_nodes,
+            "system_prompt_context": context_block
+        }
 
-        if not found_any:
-            # Default fallback section
-            fallback_results.append({
-                "section": "353",
-                "title": "Criminal force or assault to deter public servant from discharge of his duty",
-                "description": "Assaulting or using criminal force to any person being a public servant in the execution of his duty.",
-                "punishment": "Imprisonment for a term which may extend to two years, or with fine, or with both.",
-                "associated_procedures": ["BNSS-151 (Arrest to prevent cognizable offences)"]
+        llm_text = ""
+        try:
+            logger.info("Querying local Ollama endpoint http://localhost:11434/api/generate...")
+            response = requests.post("http://localhost:11434/api/generate", json=payload, timeout=30)
+            response.raise_for_status()
+            llm_result = response.json()
+            llm_text = llm_result.get("response", "").strip()
+            logger.debug(f"Received raw Ollama response: {llm_text}")
+        except Exception as e:
+            logger.error(f"Ollama generation failed or timed out: {e}")
+            response_data.update({
+                "raw_response": f"Ollama Connection Error: {e}",
+                "parse_error": True,
+                "recommended_sections": [],
+                "reasoning": "Failed to connect to local Ollama service.",
+                "required_documents": [],
+                "landmark_judgments": []
+            })
+            return response_data
+
+        # Step E: Parse the JSON response
+        try:
+            parsed_json = json.loads(llm_text)
+            response_data.update({
+                "recommended_sections": parsed_json.get("recommended_sections", []),
+                "reasoning": parsed_json.get("reasoning", ""),
+                "required_documents": parsed_json.get("required_documents", []),
+                "landmark_judgments": parsed_json.get("landmark_judgments", []),
+                "parse_error": False
+            })
+        except Exception as parse_ex:
+            logger.warning(f"Failed to parse Ollama JSON response: {parse_ex}. Raw text: '{llm_text}'")
+            response_data.update({
+                "raw_response": llm_text,
+                "parse_error": True,
+                "recommended_sections": [],
+                "reasoning": "Could not parse structured analysis from local LLM.",
+                "required_documents": [],
+                "landmark_judgments": []
             })
 
-        return fallback_results
+        return response_data
 
-# Singleton service instance
+# Singleton instance
 graph_rag_service = GraphRAGService()

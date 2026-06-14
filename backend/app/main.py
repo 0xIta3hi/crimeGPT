@@ -57,6 +57,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from typing import Optional
+
 # API Schemas
 class RAGQueryRequest(BaseModel):
     narrative: str = Field(
@@ -70,6 +72,12 @@ class RAGQueryResponse(BaseModel):
     extracted_entities: dict[str, list[str]]
     retrieved_nodes: list[dict]
     system_prompt_context: str
+    recommended_sections: Optional[list[str]] = None
+    reasoning: Optional[str] = None
+    required_documents: Optional[list[str]] = None
+    landmark_judgments: Optional[list[str]] = None
+    raw_response: Optional[str] = None
+    parse_error: Optional[bool] = None
 
 # API Endpoints
 @app.get("/health", status_code=status.HTTP_200_OK)
