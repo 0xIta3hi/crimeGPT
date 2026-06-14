@@ -17,11 +17,14 @@ class CaseService:
     Evidence, and Canonical Persons.
     """
 
-    def create_case(self, case_id: str, fir_number: str, ps_code: str, officer_badge_id: str) -> dict[str, Any]:
+    def create_case(self, case_id: str, fir_number: str, ps_code: str, officer_badge_id: str, rag_sections: Optional[list[str]] = None) -> dict[str, Any]:
         """
         Creates a new Case node, merges the Investigating Officer on badge_id,
         and establishes an INVESTIGATING link between them.
         """
+        if rag_sections is None:
+            rag_sections = ["303(2)", "305"]
+            
         query = """
         MERGE (o:Officer {badge_id: $officer_badge_id})
         ON CREATE SET o.name = "Officer " + $officer_badge_id
@@ -29,7 +32,8 @@ class CaseService:
             case_id: $case_id,
             fir_number: $fir_number,
             ps_code: $ps_code,
-            status: "Investigation"
+            status: "Investigation",
+            rag_sections: $rag_sections
         })
         CREATE (o)-[:INVESTIGATING]->(c)
         RETURN c, o
@@ -39,7 +43,8 @@ class CaseService:
                 "officer_badge_id": officer_badge_id,
                 "case_id": case_id,
                 "fir_number": fir_number,
-                "ps_code": ps_code
+                "ps_code": ps_code,
+                "rag_sections": rag_sections
             })
             if not records:
                 raise RuntimeError("Failed to execute Neo4j write transaction to create Case.")

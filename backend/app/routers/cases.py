@@ -21,6 +21,7 @@ class CaseCreateRequest(BaseModel):
     fir_number: str = Field(..., description="First Information Report number", examples=["FIR-12/2026"])
     ps_code: str = Field(..., description="Police Station Code", examples=["PS-DELHI-04"])
     officer_badge_id: str = Field(..., description="Badge ID of the Investigating Officer", examples=["BADGE-9901"])
+    rag_sections: Optional[List[str]] = Field(None, description="Optional list of top BNS sections from RAG result")
 
 class PersonAddRequest(BaseModel):
     name: str = Field(..., description="Full name of the individual", examples=["Rajesh Kumar"])
@@ -45,7 +46,8 @@ def create_case_endpoint(payload: CaseCreateRequest) -> dict[str, Any]:
             case_id=payload.case_id,
             fir_number=payload.fir_number,
             ps_code=payload.ps_code,
-            officer_badge_id=payload.officer_badge_id
+            officer_badge_id=payload.officer_badge_id,
+            rag_sections=payload.rag_sections
         )
         return res
     except Exception as e:

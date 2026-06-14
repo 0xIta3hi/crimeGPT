@@ -60,6 +60,9 @@ app.add_middleware(
 from backend.app.routers.cases import router as cases_router
 app.include_router(cases_router, prefix=settings.API_V1_STR)
 
+from backend.app.routers.documents import router as documents_router
+app.include_router(documents_router, prefix=settings.API_V1_STR)
+
 from typing import Optional
 
 # API Schemas
