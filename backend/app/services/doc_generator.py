@@ -48,6 +48,20 @@ class DocumentGenerator:
         # Extract fields and stamp generation time
         title = llm_json.get("title", f"Generated {doc_type.replace('_', ' ').title()}")
         body = llm_json.get("body", "No content generated.")
+
+        # Ensure title and body are strings (primitives) for Neo4j compatibility
+        if not isinstance(title, str):
+            if isinstance(title, (dict, list)):
+                title = json.dumps(title, indent=2)
+            else:
+                title = str(title)
+
+        if not isinstance(body, str):
+            if isinstance(body, (dict, list)):
+                body = json.dumps(body, indent=2)
+            else:
+                body = str(body)
+
         generated_at = datetime.now(timezone.utc).isoformat()
         doc_id = str(uuid.uuid4())
 

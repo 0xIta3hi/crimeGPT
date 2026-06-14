@@ -36,6 +36,19 @@ class EvidenceAddRequest(BaseModel):
 # Router Endpoints
 # ==============================================================================
 
+@router.get("/", response_model=List[dict[str, Any]])
+def list_cases_endpoint() -> List[dict[str, Any]]:
+    """
+    Lists all Case nodes registered in the database.
+    """
+    try:
+        return case_service.list_cases()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error listing cases: {str(e)}"
+        )
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_case_endpoint(payload: CaseCreateRequest) -> dict[str, Any]:
     """

@@ -240,7 +240,12 @@ class CaseService:
                         "role": p["role"],
                         "aadhar_hash": p.get("aadhar_hash")
                     })
-                    add_edge(f"rel_{p['canonical_id']}_{c['case_id']}", p["canonical_id"], c["case_id"], type(r_person))
+                    rel_type = "ACCUSED_IN"
+                    if isinstance(r_person, tuple) and len(r_person) > 1:
+                        rel_type = r_person[1]
+                    elif hasattr(r_person, "type"):
+                        rel_type = r_person.type
+                    add_edge(f"rel_{p['canonical_id']}_{c['case_id']}", p["canonical_id"], c["case_id"], rel_type)
 
                     # Process CanonicalPerson Resolution links
                     cp = record.get("cp")
@@ -272,6 +277,31 @@ class CaseService:
         except Exception as e:
             logger.error(f"Error in get_case_graph: {e}")
             raise e
+
+    def list_cases(self) -> list[dict[str, Any]]:
+        """
+        Retrieves all Case nodes from Neo4j, ordered by case_id.
+        """
+        query = """
+        MATCH (c:Case)
+        RETURN c ORDER BY c.case_id DESC LIMIT 50
+        """
+        try:
+            records = neo4j_client.execute_read(query)
+            cases = []
+            for r in records:
+                c = r.get("c")
+                if c:
+                    cases.append({
+                        "case_id": c["case_id"],
+                        "fir_number": c["fir_number"],
+                        "ps_code": c["ps_code"],
+                        "status": c.get("status", "Investigation")
+                    })
+            return cases
+        except Exception as e:
+            logger.error(f"Error in list_cases: {e}")
+            return []
 
 # Singleton service instance
 case_service = CaseService()
