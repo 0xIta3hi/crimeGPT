@@ -123,6 +123,11 @@ class CaseService:
                 response["cross_case_alert"] = True
                 response["linked_cases"] = case_ids
 
+                # Event-triggered insight generation
+                from backend.app.services.insight_engine import generate_insight_for_person_event_sync
+                triggered_insight = generate_insight_for_person_event_sync(aadhar_hash, case_id)
+                response["triggered_insight"] = triggered_insight
+
             return response
         except Exception as e:
             logger.error(f"Error in add_person_to_case: {e}")

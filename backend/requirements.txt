@@ -6,3 +6,5 @@ pydantic>=2.7.4
 pydantic-settings>=2.3.3
 pytesseract>=0.3.10
 spacy>=3.7.5
+apscheduler>=3.10.4
+

@@ -15,11 +15,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("crimegpt.main")
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from backend.app.services.insight_engine import generate_insights_from_scan
+
+scheduler = AsyncIOScheduler()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Manages application startup and shutdown events, specifically
-    initializing and cleaning up database connections.
+    initializing and cleaning up database connections and starting schedulers.
     """
     logger.info("Initializing CrimeGPT Backend Lifespan...")
     
@@ -27,6 +32,16 @@ async def lifespan(app: FastAPI):
     try:
         neo4j_client.connect()
         logger.info("Neo4j database connection established successfully.")
+
+        # Start insight engine scan scheduler
+        scheduler.add_job(generate_insights_from_scan, 'interval', minutes=5)
+        scheduler.start()
+        logger.info("APScheduler started: scanning for insights every 5 minutes.")
+
+        # Trigger an initial scan immediately on startup
+        logger.info("Triggering initial startup insight scan...")
+        await generate_insights_from_scan()
+
     except Exception as e:
         logger.error(
             f"Could not establish connection to Neo4j database during startup: {e}. "
@@ -35,8 +50,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Clean up Neo4j
+    # Clean up Neo4j and Scheduler
     logger.info("Tearing down CrimeGPT Backend Lifespan...")
+    try:
+        scheduler.shutdown()
+        logger.info("APScheduler shutdown successfully.")
+    except Exception as e:
+        logger.warning(f"Error shutting down APScheduler: {e}")
+
     neo4j_client.close()
     logger.info("Neo4j database connection closed.")
 
