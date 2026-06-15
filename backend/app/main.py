@@ -84,6 +84,9 @@ app.include_router(cases_router, prefix=settings.API_V1_STR)
 from backend.app.routers.documents import router as documents_router
 app.include_router(documents_router, prefix=settings.API_V1_STR)
 
+from backend.app.routers.insights import router as insights_router
+app.include_router(insights_router, prefix=settings.API_V1_STR)
+
 from typing import Optional
 
 # API Schemas

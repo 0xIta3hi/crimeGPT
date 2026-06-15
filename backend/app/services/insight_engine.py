@@ -19,7 +19,10 @@ def check_insight_exists(insight_type: str, title: str) -> bool:
     Checks if an unread, unreviewed insight of the same type and title already exists.
     """
     query = """
-    MATCH (i:Insight {type: $type, title: $title, read: false, analyst_feedback: 'none'})
+    MATCH (i:Insight {type: $type, title: $title})
+    WHERE (i.read = false AND i.analyst_feedback = 'none' AND coalesce(i.auto_suppressed, false) = false)
+       OR coalesce(i.auto_suppressed, false) = true
+       OR i.analyst_feedback = 'false_positive'
     RETURN count(i) > 0 as exists
     """
     try:

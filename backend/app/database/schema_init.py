@@ -226,6 +226,7 @@ def main() -> None:
         #   - triggered_by: String ("scheduler" | "new_case_event" | "new_person_event")
         #   - analyst_feedback: String ("none" | "confirmed" | "false_positive") (default "none")
         #   - feedback_at: String (ISO format datetime of feedback, nullable)
+        #   - auto_suppressed: Boolean (default false) (Set when analyst marks similar insight as false_positive)
         # ==============================================================================
         create_uniqueness_constraint(session, "insight_id_unique", "Insight", "insight_id")
         print("Confirmation: Insight.insight_id uniqueness constraint setup verified.")
@@ -238,6 +239,9 @@ def main() -> None:
 
         create_range_index(session, "insight_read_idx", "Insight", "read")
         print("Confirmation: Insight.read range index setup verified.")
+
+        create_range_index(session, "insight_auto_suppressed_idx", "Insight", "auto_suppressed")
+        print("Confirmation: Insight.auto_suppressed range index setup verified.")
         
     logger.info("Neo4j Schema Initialization completed successfully.")
 
