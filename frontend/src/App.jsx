@@ -1,13 +1,15 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from "react-router-dom";
+import axios from "axios";
 
 // Page Imports
 import Dashboard from "./pages/Dashboard";
 import NewCase from "./pages/NewCase";
 import RAGQuery from "./pages/RAGQuery";
 import CaseGraph from "./pages/CaseGraph";
+import SHODashboard from "./pages/SHODashboard";
 
-function NavigationSidebar() {
+function NavigationSidebar({ unreadCount }) {
   const location = useLocation();
 
   const navItems = [
@@ -37,6 +39,15 @@ function NavigationSidebar() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
       )
+    },
+    {
+      path: "/sho",
+      label: "SHO Dashboard",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      )
     }
   ];
 
@@ -62,10 +73,18 @@ function NavigationSidebar() {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center space-x-3.5 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-150 ${isActive ? "bg-blue-600 text-white shadow-lg shadow-blue-600/10" : "text-gray-400 hover:bg-gray-800/50 hover:text-white"}`}
+                className={`flex items-center justify-between px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-150 ${isActive ? "bg-blue-600 text-white shadow-lg shadow-blue-600/10" : "text-gray-400 hover:bg-gray-800/50 hover:text-white"}`}
               >
-                {item.icon}
-                <span>{item.label}</span>
+                <div className="flex items-center space-x-3.5">
+                  {item.icon}
+                  <span>{item.label}</span>
+                </div>
+                {item.path === "/sho" && unreadCount > 0 && (
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -81,11 +100,28 @@ function NavigationSidebar() {
 }
 
 export default function App() {
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      try {
+        const res = await axios.get("http://localhost:8000/api/v1/insights/summary");
+        setUnreadCount(res.data.unread || 0);
+      } catch (err) {
+        console.error("Error fetching insights summary in App:", err);
+      }
+    };
+
+    fetchUnreadCount();
+    const intervalId = setInterval(fetchUnreadCount, 60000);
+    return () => clearInterval(intervalId);
+  }, []);
+
   return (
     <Router>
       <div className="flex bg-gray-950 min-h-screen text-gray-100">
         {/* Sidebar Nav */}
-        <NavigationSidebar />
+        <NavigationSidebar unreadCount={unreadCount} />
 
         {/* Content Panel Area */}
         <main className="flex-1 p-8 overflow-y-auto max-w-7xl">
@@ -93,6 +129,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/case/new" element={<NewCase />} />
             <Route path="/rag" element={<RAGQuery />} />
+            <Route path="/sho" element={<SHODashboard />} />
             <Route path="/case/:case_id/graph" element={<CaseGraph />} />
           </Routes>
         </main>
