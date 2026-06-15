@@ -212,6 +212,32 @@ def main() -> None:
         # ==============================================================================
         create_range_index(session, "document_id_idx", "Document", "doc_id")
         print("Confirmation: Document.doc_id range index setup verified.")
+
+        # ==============================================================================
+        # Node Label: Insight
+        # Full Property Set:
+        #   - insight_id: String (uuid) (Unique identification for the insight)
+        #   - type: String ("pattern_match" | "link_analysis" | "recidivism_flag" | "location_cluster" | "mo_pattern" | "shared_evidence")
+        #   - severity: String ("low" | "medium" | "high" | "critical")
+        #   - title: String (Short title for the insight)
+        #   - description: String (Detailed textual description of the insight)
+        #   - generated_at: String (ISO format datetime when the insight was generated)
+        #   - read: Boolean (default false) (Indicates if the analyst has read the insight)
+        #   - triggered_by: String ("scheduler" | "new_case_event" | "new_person_event")
+        #   - analyst_feedback: String ("none" | "confirmed" | "false_positive") (default "none")
+        #   - feedback_at: String (ISO format datetime of feedback, nullable)
+        # ==============================================================================
+        create_uniqueness_constraint(session, "insight_id_unique", "Insight", "insight_id")
+        print("Confirmation: Insight.insight_id uniqueness constraint setup verified.")
+
+        create_range_index(session, "insight_severity_idx", "Insight", "severity")
+        print("Confirmation: Insight.severity range index setup verified.")
+
+        create_range_index(session, "insight_generated_at_idx", "Insight", "generated_at")
+        print("Confirmation: Insight.generated_at range index setup verified.")
+
+        create_range_index(session, "insight_read_idx", "Insight", "read")
+        print("Confirmation: Insight.read range index setup verified.")
         
     logger.info("Neo4j Schema Initialization completed successfully.")
 
